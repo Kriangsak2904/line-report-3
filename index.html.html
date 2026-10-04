@@ -1,0 +1,833 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>รายงานลูกค้าประจำวัน (Daily Customer Report)</title>
+    
+    <!-- Tailwind CSS สำหรับการจัดการ Layout และ Styling -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- PapaParse สำหรับอ่านไฟล์ CSV จาก Google Sheet -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+    
+    <!-- FontAwesome สำหรับไอคอนตกแต่ง -->
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    
+    <!-- Google Font (Prompt) รองรับภาษาไทยได้สวยงาม -->
+    <link href="https://fonts.googleapis.com/css2?family=Prompt:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    
+    <!-- Flatpickr Datepicker CSS สำหรับเลือกช่วงวันที่ -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css">
+    
+    <style>
+        body { 
+            font-family: 'Prompt', sans-serif; 
+        }
+        
+        /* สไตล์ Glassmorphism สำหรับการ์ดให้ดูทันสมัย */
+        .glass-card {
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.4);
+            box-shadow: 0 4px 15px -3px rgba(0, 0, 0, 0.05), 0 2px 6px -2px rgba(0, 0, 0, 0.03);
+        }
+        
+        /* ตกแต่ง Scrollbar ให้ดูเรียบเนียน */
+        ::-webkit-scrollbar { 
+            width: 8px; 
+            height: 8px; 
+        }
+        ::-webkit-scrollbar-track { 
+            background: #f1f5f9; 
+            border-radius: 10px; 
+        }
+        ::-webkit-scrollbar-thumb { 
+            background: #cbd5e1; 
+            border-radius: 10px; 
+        }
+        ::-webkit-scrollbar-thumb:hover { 
+            background: #94a3b8; 
+        }
+    </style>
+</head>
+<body class="bg-slate-50 min-h-screen text-slate-800">
+
+    <nav class="bg-gradient-to-r from-blue-600 to-indigo-700 text-white shadow-lg sticky top-0 z-50">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="flex items-center justify-between h-16">
+                <div class="flex items-center gap-3">
+                    <div class="bg-white/20 p-2 rounded-lg">
+                        <i class="fas fa-chart-pie text-xl"></i>
+                    </div>
+                    <div>
+                        <h1 class="font-semibold text-lg leading-tight">ระบบรายงานข้อมูลลูกค้า</h1>
+                        <p class="text-xs text-blue-200">Daily Customer Interactions</p>
+                    </div>
+                </div>
+                <div class="flex items-center gap-2">
+                    <!-- ปุ่มอัปเดตข้อมูล -->
+                    <button id="refreshBtn" class="text-sm bg-blue-50 hover:bg-white text-blue-600 px-4 py-2 rounded-lg transition-colors flex items-center gap-2 font-medium shadow-sm">
+                        <i class="fas fa-sync-alt" id="refreshIcon"></i>
+                        <span class="hidden sm:inline">อัปเดตข้อมูล</span>
+                    </button>
+                    <!-- ลิงก์สำหรับกดกลับไปดู Google Sheet ต้นฉบับ -->
+                    <a href="https://docs.google.com/spreadsheets/d/1s-OI8ICVVe4MoG6OThHBKOOiArdRY8xUve0KaSKyI4Q/edit" target="_blank" class="text-sm bg-white/10 hover:bg-white/20 px-4 py-2 rounded-lg transition-colors flex items-center gap-2 border border-white/10 text-white">
+                        <i class="fas fa-external-link-alt"></i>
+                        <span class="hidden sm:inline">เปิด Google Sheet</span>
+                    </a>
+                </div>
+            </div>
+        </div>
+    </nav>
+
+    <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        
+        <!-- สถานะกำลังโหลดข้อมูล (Loading State) -->
+        <div id="loadingState" class="flex flex-col items-center justify-center py-20 min-h-[50vh]">
+            <i class="fas fa-circle-notch fa-spin text-5xl text-blue-500 mb-6"></i>
+            <h2 class="text-xl font-semibold text-slate-700">กำลังซิงค์ข้อมูล...</h2>
+            <p class="text-slate-500 mt-2">โปรดรอสักครู่ ระบบกำลังอ่านข้อมูลจาก Google Sheet ของคุณ</p>
+        </div>
+
+        <!-- สถานะเกิดข้อผิดพลาด (Error State) -->
+        <div id="errorState" class="hidden bg-red-50 border-l-4 border-red-500 text-red-700 p-6 rounded-r-xl shadow-sm mb-6" role="alert">
+            <div class="flex items-start gap-3">
+                <i class="fas fa-exclamation-circle text-xl mt-0.5"></i>
+                <div>
+                    <strong class="block font-bold text-lg mb-1">เกิดข้อผิดพลาดในการดึงข้อมูล</strong>
+                    <span id="errorMessage" class="text-sm"></span>
+                    <p class="text-xs text-red-500 mt-3 pt-3 border-t border-red-200">
+                        *ตรวจสอบให้แน่ใจว่า Google Sheet ถูกตั้งค่าแชร์เป็น <b>"Anyone with the link"</b> (ทุกคนที่มีลิงก์) เพื่อให้ระบบเข้าถึงข้อมูลได้
+                    </p>
+                </div>
+            </div>
+        </div>
+
+        <!-- ส่วนเนื้อหา Dashboard (จะแสดงเมื่อดึงข้อมูลสำเร็จ) -->
+        <div id="dashboardContent" class="hidden space-y-6">
+            
+            <!-- ส่วนคัดกรองวันที่ (Date Filter) -->
+            <div class="glass-card rounded-2xl p-5 flex flex-col sm:flex-row items-center justify-between gap-4 relative z-20">
+                <div class="flex items-center gap-4 w-full sm:w-auto">
+                    <div class="bg-blue-100 p-3 rounded-xl text-blue-600 hidden sm:block">
+                        <i class="far fa-calendar-alt text-xl"></i>
+                    </div>
+                    <div>
+                        <h2 class="text-lg font-semibold text-slate-800">เลือกช่วงวันที่รายงาน</h2>
+                        <p class="text-sm text-slate-500">ข้อมูลจะสรุปยอดตามช่วงวันที่ที่คุณเลือก</p>
+                    </div>
+                </div>
+                <div class="relative w-full sm:w-80">
+                    <div class="absolute inset-y-0 left-0 flex items-center pl-4 pointer-events-none">
+                        <i class="far fa-calendar-check text-indigo-500"></i>
+                    </div>
+                    <!-- เปลี่ยนจาก Select เป็น Input Text สำหรับ Flatpickr -->
+                    <input type="text" id="dateRangePicker" placeholder="เลือกช่วงวันที่..." class="bg-white border-2 border-indigo-100 text-slate-700 text-base font-medium rounded-xl focus:ring-indigo-500 focus:border-indigo-500 block w-full pl-12 p-3 outline-none transition-all cursor-pointer shadow-sm hover:border-indigo-300" readonly>
+                    
+                    <div class="absolute inset-y-0 right-0 flex items-center pr-4 pointer-events-none text-slate-400">
+                        <i class="fas fa-chevron-down text-sm"></i>
+                    </div>
+                </div>
+            </div>
+
+            <!-- การ์ดสรุปยอด (Summary Cards) -->
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+                
+                <!-- การ์ดที่ 1: จำนวนลูกค้าที่ไม่ซ้ำ (Unique User Ids) -->
+                <div class="glass-card rounded-2xl p-6 flex items-center gap-4 relative overflow-hidden group">
+                    <div class="absolute top-0 right-0 -mr-8 -mt-8 w-32 h-32 rounded-full bg-blue-50 opacity-50 group-hover:scale-110 transition-transform duration-500"></div>
+                    <div class="p-4 bg-gradient-to-br from-blue-100 to-blue-200 rounded-2xl text-blue-600 shadow-inner z-10">
+                        <i class="fas fa-users text-3xl"></i>
+                    </div>
+                    <div class="z-10">
+                        <p class="text-xs font-medium text-slate-500">ลูกค้าทั้งหมด (ไม่ซ้ำ)</p>
+                        <div class="flex items-baseline gap-1">
+                            <h3 class="text-3xl font-bold text-slate-800" id="totalUniqueUsers">0</h3>
+                            <span class="text-xs font-medium text-slate-500">คน</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- การ์ดที่ 2: ลูกค้าใหม่ -->
+                <div class="glass-card rounded-2xl p-6 flex items-center gap-4 relative overflow-hidden group">
+                    <div class="absolute top-0 right-0 -mr-8 -mt-8 w-32 h-32 rounded-full bg-orange-50 opacity-50 group-hover:scale-110 transition-transform duration-500"></div>
+                    <div class="p-4 bg-gradient-to-br from-orange-100 to-orange-200 rounded-2xl text-orange-600 shadow-inner z-10">
+                        <i class="fas fa-user-plus text-3xl"></i>
+                    </div>
+                    <div class="z-10">
+                        <p class="text-xs font-medium text-slate-500">ลูกค้าใหม่</p>
+                        <div class="flex items-baseline gap-1">
+                            <h3 class="text-3xl font-bold text-slate-800" id="newUsers">0</h3>
+                            <span class="text-xs font-medium text-slate-500">คน</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- การ์ดที่ 3: ลูกค้าเก่า (ทักซ้ำ) -->
+                <div class="glass-card rounded-2xl p-6 flex items-center gap-4 relative overflow-hidden group">
+                    <div class="absolute top-0 right-0 -mr-8 -mt-8 w-32 h-32 rounded-full bg-purple-50 opacity-50 group-hover:scale-110 transition-transform duration-500"></div>
+                    <div class="p-4 bg-gradient-to-br from-purple-100 to-purple-200 rounded-2xl text-purple-600 shadow-inner z-10">
+                        <i class="fas fa-user-check text-3xl"></i>
+                    </div>
+                    <div class="z-10">
+                        <p class="text-xs font-medium text-slate-500">ลูกค้าเก่า (ทักซ้ำ)</p>
+                        <div class="flex items-baseline gap-1">
+                            <h3 class="text-3xl font-bold text-slate-800" id="returningUsers">0</h3>
+                            <span class="text-xs font-medium text-slate-500">คน</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- การ์ดที่ 4: จำนวนรายการทักทั้งหมด (Total Interactions) -->
+                <div class="glass-card rounded-2xl p-6 flex items-center gap-4 relative overflow-hidden group">
+                    <div class="absolute top-0 right-0 -mr-8 -mt-8 w-32 h-32 rounded-full bg-emerald-50 opacity-50 group-hover:scale-110 transition-transform duration-500"></div>
+                    <div class="p-4 bg-gradient-to-br from-emerald-100 to-emerald-200 rounded-2xl text-emerald-600 shadow-inner z-10">
+                        <i class="fas fa-comment-dots text-3xl"></i>
+                    </div>
+                    <div class="z-10">
+                        <p class="text-xs font-medium text-slate-500">รายการทักทั้งหมด</p>
+                        <div class="flex items-baseline gap-1">
+                            <h3 class="text-3xl font-bold text-slate-800" id="totalInteractions">0</h3>
+                            <span class="text-xs font-medium text-slate-500">ครั้ง</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                
+                <!-- ตารางรายละเอียดข้อมูล (Data Table Area) -->
+                <div class="lg:col-span-2 glass-card rounded-2xl overflow-hidden flex flex-col h-[600px] border border-slate-200">
+                    <div class="px-6 py-4 border-b border-slate-100 bg-white/60 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 backdrop-blur-md">
+                        <h2 class="text-lg font-semibold text-slate-800"><i class="fas fa-list-alt mr-2 text-indigo-500"></i>รายละเอียดข้อมูลการทัก</h2>
+                        
+                        <div class="flex items-center gap-3 w-full sm:w-auto justify-between sm:justify-end flex-wrap">
+                            
+                            <!-- ตัวกรอง Tag (Tag Filter) -->
+                            <div class="relative">
+                                <select id="tagFilter" class="appearance-none bg-white border border-slate-200 text-slate-600 text-xs font-medium rounded-lg focus:ring-indigo-500 focus:border-indigo-500 block w-full py-1.5 pl-3 pr-8 shadow-sm cursor-pointer outline-none hover:bg-slate-50 transition-colors">
+                                    <option value="all">ทุกแท็ก (All Tags)</option>
+                                </select>
+                                <div class="pointer-events-none absolute inset-y-0 right-0 flex items-center px-2 text-slate-400">
+                                    <i class="fas fa-chevron-down text-[10px]"></i>
+                                </div>
+                            </div>
+
+                            <!-- ปุ่มสลับโหมดการแสดงผลตาราง -->
+                            <div class="flex items-center bg-slate-100 p-1 rounded-lg text-xs font-medium border border-slate-200">
+                                <button id="btnViewAll" class="px-3 py-1.5 rounded-md bg-white text-indigo-600 shadow-sm transition-all">ทั้งหมด</button>
+                                <button id="btnViewLatest" class="px-3 py-1.5 rounded-md text-slate-500 hover:text-slate-700 hover:bg-slate-200 transition-all">ล่าสุดเท่านั้น</button>
+                            </div>
+                            <!-- ป้ายแสดงจำนวนรายการ -->
+                            <span class="text-xs font-semibold bg-indigo-50 border border-indigo-100 text-indigo-700 py-1.5 px-3 rounded-full shadow-sm whitespace-nowrap" id="tableCountBadge">0 รายการ</span>
+                        </div>
+                    </div>
+                    <div class="overflow-y-auto flex-1 p-0 relative">
+                        <table class="w-full text-sm text-left text-slate-600 relative">
+                            <thead class="text-xs text-slate-500 uppercase bg-slate-50/90 sticky top-0 backdrop-blur-sm z-10 shadow-sm border-b border-slate-200">
+                                <tr>
+                                    <th scope="col" class="px-6 py-4 font-semibold">วันที่ <span class="normal-case font-normal text-[10px] block text-slate-400">(เวลาที่ทัก)</span></th>
+                                    <th scope="col" class="px-6 py-4 font-semibold">เวลา <span class="normal-case font-normal text-[10px] block text-slate-400">(Time)</span></th>
+                                    <th scope="col" class="px-6 py-4 font-semibold">ลูกค้า <span class="normal-case font-normal text-[10px] block text-slate-400">(User Id)</span></th>
+                                    <th scope="col" class="px-6 py-4 font-semibold">ข้อความ <span class="normal-case font-normal text-[10px] block text-slate-400">(Message)</span></th>
+                                    <th scope="col" class="px-6 py-4 font-semibold">หมวดหมู่ <span class="normal-case font-normal text-[10px] block text-slate-400">(Tag)</span></th>
+                                </tr>
+                            </thead>
+                            <tbody id="dataTableBody" class="divide-y divide-slate-100 bg-white/40">
+                                <!-- รายการแถวจะถูกสร้างโดย JavaScript -->
+                            </tbody>
+                        </table>
+                        
+                        <!-- กรณีไม่มีข้อมูล (Empty State) -->
+                        <div id="noDataState" class="hidden absolute inset-0 flex flex-col items-center justify-center bg-white/80 backdrop-blur-sm z-20">
+                            <div class="bg-slate-100 p-5 rounded-full mb-4">
+                                <i class="far fa-folder-open text-4xl text-slate-400"></i>
+                            </div>
+                            <h3 class="text-lg font-medium text-slate-700">ไม่พบข้อมูล</h3>
+                            <p class="text-slate-500 text-sm">ไม่มีรายการลูกค้าทักเข้ามาในวันที่เลือก</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- ส่วนสรุปแท็ก (Tags Summary Area) -->
+                <div class="glass-card rounded-2xl overflow-hidden flex flex-col h-[600px] border border-slate-200">
+                    <div class="px-6 py-4 border-b border-slate-100 bg-white/60 backdrop-blur-md">
+                        <h2 class="text-lg font-semibold text-slate-800"><i class="fas fa-tags mr-2 text-indigo-500"></i>สรุปแท็กยอดฮิต (Tags)</h2>
+                    </div>
+                    <div class="overflow-y-auto flex-1 p-6 bg-white/40">
+                        <div id="tagsList" class="space-y-5">
+                            <!-- รายการ Tags จะถูกสร้างโดย JavaScript -->
+                        </div>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+    </main>
+
+    <!-- Flatpickr Datepicker JS -->
+    <script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
+    <script src="https://npmcdn.com/flatpickr/dist/l10n/th.js"></script>
+
+    <script>
+        // 1. ตั้งค่าคงที่สำหรับ Google Sheet
+        // ID ของ Sheet ที่คุณให้มา
+        const SHEET_ID = '1s-OI8ICVVe4MoG6OThHBKOOiArdRY8xUve0KaSKyI4Q';
+        // แปลงเป็น URL สำหรับ Export เป็น CSV แบบสาธารณะ
+        const CSV_URL = `https://docs.google.com/spreadsheets/d/${SHEET_ID}/export?format=csv`;
+
+        // 2. อ้างอิง HTML Elements
+        const elLoading = document.getElementById('loadingState');
+        const elError = document.getElementById('errorState');
+        const elErrorMsg = document.getElementById('errorMessage');
+        const elDashboard = document.getElementById('dashboardContent');
+        const elTotalUniqueUsers = document.getElementById('totalUniqueUsers');
+        const elNewUsers = document.getElementById('newUsers');
+        const elReturningUsers = document.getElementById('returningUsers');
+        const elTotalInteractions = document.getElementById('totalInteractions');
+        const elDataTableBody = document.getElementById('dataTableBody');
+        const elNoDataState = document.getElementById('noDataState');
+        const elTagsList = document.getElementById('tagsList');
+        const elTableCountBadge = document.getElementById('tableCountBadge');
+        const elRefreshBtn = document.getElementById('refreshBtn');
+        const elRefreshIcon = document.getElementById('refreshIcon');
+        const elDateRangePickerInput = document.getElementById('dateRangePicker');
+        const elTagFilter = document.getElementById('tagFilter'); // เพิ่มตัวแปร Tag Filter
+        
+        // ตัวแปรสำหรับปุ่มโหมดการแสดงผลตาราง
+        const elBtnViewAll = document.getElementById('btnViewAll');
+        const elBtnViewLatest = document.getElementById('btnViewLatest');
+
+        // ตัวแปรสำหรับเก็บข้อมูลทั้งหมด
+        let sheetData = [];
+        let uniqueDates = [];
+        let datePickerInstance = null; // เก็บ Instance ของ Flatpickr
+        let firstContactMap = new Map(); // เก็บวันที่ทักครั้งแรกของแต่ละ User ID
+        let currentFilteredData = []; // เก็บข้อมูลที่ถูกคัดกรองตามวันที่แล้ว
+        let tableViewMode = 'all'; // สถานะโหมดการแสดงผลตาราง ('all' หรือ 'latest')
+        let currentSelectedTag = 'all'; // เก็บสถานะ Tag ที่ถูกเลือกกรอง
+        
+        // ชุดสีสำหรับแต่ละ Tag เพื่อให้ตารางดูง่ายขึ้น
+        const tagColorThemes = [
+            { bg: 'bg-blue-50', text: 'text-blue-700', border: 'border-blue-100', icon: 'text-blue-400' },
+            { bg: 'bg-emerald-50', text: 'text-emerald-700', border: 'border-emerald-100', icon: 'text-emerald-400' },
+            { bg: 'bg-purple-50', text: 'text-purple-700', border: 'border-purple-100', icon: 'text-purple-400' },
+            { bg: 'bg-orange-50', text: 'text-orange-700', border: 'border-orange-100', icon: 'text-orange-400' },
+            { bg: 'bg-pink-50', text: 'text-pink-700', border: 'border-pink-100', icon: 'text-pink-400' },
+            { bg: 'bg-teal-50', text: 'text-teal-700', border: 'border-teal-100', icon: 'text-teal-400' },
+            { bg: 'bg-yellow-50', text: 'text-yellow-700', border: 'border-yellow-100', icon: 'text-yellow-400' },
+            { bg: 'bg-cyan-50', text: 'text-cyan-700', border: 'border-cyan-100', icon: 'text-cyan-400' },
+            { bg: 'bg-rose-50', text: 'text-rose-700', border: 'border-rose-100', icon: 'text-rose-400' }
+        ];
+        const noTagTheme = { bg: 'bg-slate-100', text: 'text-slate-500', border: 'border-slate-200', icon: 'text-slate-400' };
+        let tagThemeMap = new Map(); // เก็บว่า Tag ไหนได้สีอะไรไปแล้วบ้าง
+
+        // 3. ฟังก์ชันเริ่มการทำงานเมื่อโหลดหน้าเว็บ
+        document.addEventListener('DOMContentLoaded', () => {
+            fetchData();
+            
+            // จับเหตุการณ์คลิกปุ่มอัปเดตข้อมูล
+            elRefreshBtn.addEventListener('click', () => {
+                fetchData(true);
+            });
+
+            // จับเหตุการณ์คลิกปุ่มสลับโหมด "ทั้งหมด"
+            elBtnViewAll.addEventListener('click', () => {
+                tableViewMode = 'all';
+                
+                // อัปเดตสไตล์ปุ่มให้ปุ่ม "ทั้งหมด" สว่าง
+                elBtnViewAll.className = 'px-3 py-1.5 rounded-md bg-white text-indigo-600 shadow-sm transition-all';
+                elBtnViewLatest.className = 'px-3 py-1.5 rounded-md text-slate-500 hover:text-slate-700 hover:bg-slate-200 transition-all';
+                
+                updateTableDisplay();
+            });
+
+            // จับเหตุการณ์คลิกปุ่มสลับโหมด "ล่าสุดเท่านั้น"
+            elBtnViewLatest.addEventListener('click', () => {
+                tableViewMode = 'latest';
+                
+                // อัปเดตสไตล์ปุ่มให้ปุ่ม "ล่าสุด" สว่าง
+                elBtnViewLatest.className = 'px-3 py-1.5 rounded-md bg-white text-indigo-600 shadow-sm transition-all';
+                elBtnViewAll.className = 'px-3 py-1.5 rounded-md text-slate-500 hover:text-slate-700 hover:bg-slate-200 transition-all';
+                
+                updateTableDisplay();
+            });
+
+            // จับเหตุการณ์เมื่อเปลี่ยน Tag Filter
+            elTagFilter.addEventListener('change', (e) => {
+                currentSelectedTag = e.target.value;
+                updateTableDisplay();
+            });
+        });
+
+        // 4. ดึงข้อมูล CSV และแปลงเป็น Array ของ Object
+        function fetchData(isRefresh = false) {
+            // จัดการ UI สถานะกำลังโหลด
+            if (isRefresh) {
+                elRefreshIcon.classList.add('fa-spin');
+                elRefreshBtn.disabled = true;
+                elRefreshBtn.classList.add('opacity-70', 'cursor-not-allowed');
+            } else {
+                elLoading.classList.remove('hidden');
+                elDashboard.classList.add('hidden');
+                elError.classList.add('hidden');
+            }
+
+            // เพิ่ม Cache-busting time parameter เข้าไปที่ URL เพื่อบังคับให้ดึงข้อมูลใหม่ล่าสุดเสมอ (ลดปัญหาการติด Cache)
+            const noCacheUrl = `${CSV_URL}&_t=${new Date().getTime()}`;
+
+            Papa.parse(noCacheUrl, {
+                download: true,       // ดาวน์โหลดไฟล์ผ่าน URL
+                header: true,         // ใช้แถวแรกเป็น Key
+                skipEmptyLines: true, // ข้ามบรรทัดที่ว่างเปล่า
+                complete: function(results) {
+                    if (results.data && results.data.length > 0) {
+                        const headers = Object.keys(results.data[0]);
+                        // ทำให้ชื่อคอลัมน์เป็นตัวพิมพ์เล็กทั้งหมดเพื่อง่ายต่อการเปรียบเทียบ (Case Insensitive)
+                        const lowerHeaders = headers.map(h => h.toLowerCase().trim());
+                        
+                        // ตรวจสอบเบื้องต้นว่ามีคอลัมน์ที่ต้องการอยู่หรือไม่ (แบบยืดหยุ่น) ค้นหาคอลัมน์ date time
+                        const hasRequiredCols = lowerHeaders.some(h => 
+                            h.includes('date time') || h.includes('user id') || h.includes('tag')
+                        );
+                        
+                        if (!hasRequiredCols) {
+                            showError('ไม่พบคอลัมน์ตามที่กำหนด (DATE TIME, User Id, Tag) โปรดตรวจสอบโครงสร้างไฟล์อีกครั้ง');
+                            resetRefreshBtn(isRefresh);
+                            return;
+                        }
+                        
+                        // ทำความสะอาดและจับคู่ชื่อคอลัมน์ใหม่ให้ได้มาตรฐาน
+                        sheetData = results.data.map(row => {
+                            const newRow = {};
+                            for (let key in row) {
+                                const lowerKey = key.toLowerCase().trim();
+                                
+                                // อ่านข้อมูลวันที่และเวลาจากคอลัมน์ DATE TIME (รองรับ ISO format)
+                                if (lowerKey === 'date time' || lowerKey.includes('date time')) {
+                                    const dateTimeStr = row[key];
+                                    if (dateTimeStr) {
+                                        const d = new Date(dateTimeStr); // แปลง String วันที่ให้เป็น Date Object
+                                        if (!isNaN(d.getTime())) {
+                                            newRow['Date'] = formatDateToIso(d); // ดึงเฉพาะวันที่เพื่อจัดกลุ่ม (YYYY-MM-DD)
+                                            
+                                            // ดึงเฉพาะเวลาในรูปแบบ HH:mm
+                                            const hours = String(d.getHours()).padStart(2, '0');
+                                            const minutes = String(d.getMinutes()).padStart(2, '0');
+                                            newRow['Time'] = `${hours}:${minutes}`;
+                                            
+                                            newRow['_exactDateTime'] = d; // เก็บไว้คำนวณประวัติลูกค้าเก่า/ใหม่ได้อย่างแม่นยำ
+                                        }
+                                    }
+                                }
+                                else if (lowerKey.includes('user id')) newRow['UserId'] = row[key];
+                                else if (lowerKey.includes('tag')) newRow['Tag'] = row[key];
+                                else if (lowerKey.includes('ข้อความ') || lowerKey.includes('message') || lowerKey.includes('text')) newRow['Message'] = row[key];
+                                else newRow[key] = row[key]; // คอลัมน์อื่นๆ เก็บไว้เหมือนเดิม
+                            }
+                            return newRow;
+                        });
+                        
+                        // ถ้ารีเฟรช ให้จำช่วงวันที่ที่กำลังดูอยู่ไว้
+                        const preservedDates = datePickerInstance ? datePickerInstance.selectedDates : null;
+                        processInitialData(preservedDates);
+                        
+                    } else {
+                        showError('Google Sheet นี้ไม่มีข้อมูล หรือไฟล์ว่างเปล่า');
+                    }
+                    resetRefreshBtn(isRefresh);
+                },
+                error: function(err) {
+                    console.error("PapaParse Error:", err);
+                    showError('ไม่สามารถอ่านข้อมูลได้ โปรดมั่นใจว่า Google Sheet เปิดแชร์เป็น "Anyone with the link" แล้ว');
+                    resetRefreshBtn(isRefresh);
+                }
+            });
+        }
+
+        // ฟังก์ชันคืนค่าสถานะปุ่มอัปเดตข้อมูล
+        function resetRefreshBtn(isRefresh) {
+            if (isRefresh) {
+                setTimeout(() => {
+                    elRefreshIcon.classList.remove('fa-spin');
+                    elRefreshBtn.disabled = false;
+                    elRefreshBtn.classList.remove('opacity-70', 'cursor-not-allowed');
+                }, 500); // หน่วงเวลาเล็กน้อยให้ผู้ใช้เห็นว่าโหลดเสร็จแล้ว
+            }
+        }
+
+        // 5. ประมวลผลข้อมูลครั้งแรกเพื่อหาวันที่ทั้งหมดและเตรียม Dropdown
+        function processInitialData(preservedDates = null) {
+            // ใช้ Set เพื่อเก็บวันที่ไม่ซ้ำกัน
+            const dateSet = new Set();
+            firstContactMap.clear(); // รีเซ็ตข้อมูลเวลาทักแรก
+
+            sheetData.forEach(row => {
+                const dateVal = row['Date'];
+                if (dateVal && dateVal.trim() !== '') {
+                    dateSet.add(dateVal);
+                    row['_parsedDate'] = dateVal;
+                    
+                    // บันทึกวันที่/เวลาทักครั้งแรกของ User ID ไว้เพื่อเช็คลูกค้าเก่า/ใหม่
+                    const userId = row['UserId'] ? row['UserId'].trim() : '';
+                    if (userId) {
+                        const exactTime = row['_exactDateTime'];
+                        if (exactTime) {
+                            if (!firstContactMap.has(userId) || exactTime < firstContactMap.get(userId)) {
+                                firstContactMap.set(userId, exactTime);
+                            }
+                        }
+                    }
+                }
+            });
+
+            uniqueDates = Array.from(dateSet).sort();
+
+            if (uniqueDates.length === 0) {
+                showError('ไม่พบข้อมูลวันที่ในคอลัมน์ "DATE TIME" หรือรูปแบบวันที่อ่านไม่เข้าใจ');
+                return;
+            }
+
+            // ซ่อนหน้า Loading และแสดง Dashboard
+            elLoading.classList.add('hidden');
+            elDashboard.classList.remove('hidden');
+
+            // หาช่วงวันที่ต่ำสุดและสูงสุดที่มีในข้อมูล
+            const minAvailableDate = uniqueDates[0];
+            const maxAvailableDate = uniqueDates[uniqueDates.length - 1];
+
+            // ถ้ารีเฟรชและมีช่วงวันที่เดิมที่เลือกไว้ ให้ใช้ค่าเดิม ถ้าไม่มีให้ใช้วันล่าสุด 1 วัน
+            let initialSelectedDates = [maxAvailableDate, maxAvailableDate]; 
+            
+            if (preservedDates && preservedDates.length > 0) {
+                 initialSelectedDates = preservedDates;
+            }
+
+            // ถ้ามี Flatpickr instance อยู่แล้ว ให้ destroy ทิ้งก่อนสร้างใหม่เพื่ออัปเดต option
+            if(datePickerInstance) {
+                datePickerInstance.destroy();
+            }
+
+            // สร้าง Flatpickr สำหรับเลือก Date Range
+            datePickerInstance = flatpickr(elDateRangePickerInput, {
+                mode: "range",
+                dateFormat: "Y-m-d",
+                minDate: minAvailableDate,
+                maxDate: maxAvailableDate,
+                defaultDate: initialSelectedDates,
+                locale: "th", // ใช้ภาษาไทย
+                onChange: function(selectedDates, dateStr, instance) {
+                    // ทำงานเมื่อผู้ใช้เลือกวันที่เสร็จ (คลิกครบ 2 ครั้ง หรือเลือกวันเดียว)
+                    if (selectedDates.length === 1 || selectedDates.length === 2) {
+                        renderDashboard(selectedDates);
+                    }
+                }
+            });
+
+            // อัปเดตข้อมูลเริ่มต้น (ใช้วันที่ที่ถูกตั้งไว้ใน defaultDate)
+            renderDashboard(datePickerInstance.selectedDates);
+        }
+
+        // แปลง Date Object เป็น String 'YYYY-MM-DD'
+        function formatDateToIso(d) {
+            let month = '' + (d.getMonth() + 1);
+            let day = '' + d.getDate();
+            let year = d.getFullYear();
+
+            if (month.length < 2) month = '0' + month;
+            if (day.length < 2) day = '0' + day;
+
+            return [year, month, day].join('-');
+        }
+
+        // ฟังก์ชันกำหนดสีให้ Tag แบบสุ่มแต่คงที่ (Tag เดิมจะได้สีเดิมเสมอ)
+        function getThemeForTag(tag) {
+            if (!tag || tag.includes('ไม่มีแท็ก')) return noTagTheme;
+            if (tagThemeMap.has(tag)) return tagThemeMap.get(tag);
+            
+            const nextIndex = tagThemeMap.size % tagColorThemes.length;
+            const selectedTheme = tagColorThemes[nextIndex];
+            tagThemeMap.set(tag, selectedTheme);
+            return selectedTheme;
+        }
+
+        // 6. อัปเดตข้อมูลทั้งหมดบน Dashboard ตามช่วงวันที่ที่เลือก
+        function renderDashboard(selectedDates) {
+            if (!selectedDates || selectedDates.length === 0) return;
+            
+            let startDate = selectedDates[0];
+            let endDate = selectedDates.length === 2 ? selectedDates[1] : selectedDates[0]; // ถ้าเลือกวันเดียว ให้ start/end เป็นวันเดียวกัน
+
+            // รีเซ็ตเวลาเพื่อเปรียบเทียบเฉพาะวัน
+            startDate.setHours(0,0,0,0);
+            endDate.setHours(23,59,59,999);
+
+            // คัดกรองข้อมูลให้อยู่ในช่วง startDate และ endDate
+            const filteredData = sheetData.filter(row => {
+                if(!row['_parsedDate']) return false;
+                const rowDate = new Date(row['_parsedDate']);
+                return rowDate >= startDate && rowDate <= endDate;
+            });
+
+            // ตัวแปรสำหรับคำนวณสถิติ
+            const uniqueUsers = new Set();
+            const newUsersSet = new Set();
+            const returningUsersSet = new Set();
+            const tagCounts = {};
+
+            filteredData.forEach(row => {
+                // จัดการ User Id (นำ Case Sensitivity ออก)
+                const userId = row['UserId'] ? row['UserId'].trim() : '';
+                if (userId) {
+                    uniqueUsers.add(userId);
+                    
+                    // เช็คว่าเป็นลูกค้าเก่าหรือใหม่ (โดยดูจากประวัติการทักครั้งแรกสุดเทียบกับวันเริ่มต้นที่เลือก)
+                    const firstContact = firstContactMap.get(userId);
+                    if (firstContact && firstContact < startDate) {
+                        returningUsersSet.add(userId);
+                    } else {
+                        newUsersSet.add(userId);
+                    }
+                }
+
+                // จัดการ Tag (ถ้าไม่มีหรือว่าง ให้แสดงเป็น 'ไม่มีแท็ก')
+                let tag = row['Tag'] ? row['Tag'].trim() : '';
+                if(tag === '') tag = 'ไม่มีแท็ก (No Tag)';
+                
+                tagCounts[tag] = (tagCounts[tag] || 0) + 1;
+            });
+
+            // อัปเดตการ์ดสรุปยอด
+            animateValue(elTotalUniqueUsers, parseInt(elTotalUniqueUsers.innerText.replace(/,/g, '')) || 0, uniqueUsers.size, 800);
+            animateValue(elNewUsers, parseInt(elNewUsers.innerText.replace(/,/g, '')) || 0, newUsersSet.size, 800);
+            animateValue(elReturningUsers, parseInt(elReturningUsers.innerText.replace(/,/g, '')) || 0, returningUsersSet.size, 800);
+            animateValue(elTotalInteractions, parseInt(elTotalInteractions.innerText.replace(/,/g, '')) || 0, filteredData.length, 800);
+            
+            // อัปเดตตัวเลือกใน Dropdown คัดกรอง Tag ให้มีเฉพาะแท็กของช่วงวันที่นั้นๆ
+            updateTagFilterOptions(Object.keys(tagCounts));
+
+            // เก็บข้อมูลที่กรองวันที่แล้วไว้ใช้ตอนสลับโหมด
+            currentFilteredData = filteredData;
+
+            // วาดตารางและสรุปแท็ก
+            updateTableDisplay();
+            renderTags(tagCounts, filteredData.length);
+        }
+
+        // ฟังก์ชันอัปเดตตัวเลือกใน Dropdown คัดกรองแท็ก
+        function updateTagFilterOptions(tags) {
+            const previousSelection = elTagFilter.value; // เก็บค่าเก่าที่เคยเลือกไว้
+            
+            elTagFilter.innerHTML = '<option value="all">ทุกแท็ก (All Tags)</option>';
+            
+            // จัดเรียงชื่อแท็กตามตัวอักษรและสร้าง Option
+            tags.sort().forEach(tag => {
+                const option = document.createElement('option');
+                option.value = tag;
+                option.textContent = tag;
+                elTagFilter.appendChild(option);
+            });
+
+            // คืนค่าที่เคยเลือกไว้ หากแท็กนั้นยังมีอยู่ในช่วงวันที่ใหม่
+            if (tags.includes(previousSelection)) {
+                elTagFilter.value = previousSelection;
+                currentSelectedTag = previousSelection;
+            } else {
+                elTagFilter.value = 'all';
+                currentSelectedTag = 'all';
+            }
+        }
+
+        // ฟังก์ชันแยกสำหรับจัดการแสดงผลตารางตามโหมดที่เลือก (ทั้งหมด หรือ ล่าสุด)
+        function updateTableDisplay() {
+            // สร้าง Array ชุดใหม่เพื่อไม่ให้กระทบข้อมูลหลัก
+            let displayData = [...currentFilteredData];
+
+            if (tableViewMode === 'latest') {
+                // ดึงเฉพาะรายการทักล่าสุดของลูกค้าแต่ละคน
+                const userLatestMap = new Map();
+                
+                displayData.forEach(row => {
+                    const userId = row['UserId'] ? row['UserId'].trim() : '';
+                    if (userId) {
+                        const existingRow = userLatestMap.get(userId);
+                        // ถ้ายังไม่มีใน Map หรือ รายการปัจจุบันเวลาใหม่กว่าใน Map ให้แทนที่ด้วยรายการนี้
+                        if (!existingRow || row['_exactDateTime'] > existingRow['_exactDateTime']) {
+                            userLatestMap.set(userId, row);
+                        }
+                    }
+                });
+                
+                // แปลงข้อมูลจาก Map กลับเป็น Array
+                displayData = Array.from(userLatestMap.values());
+            }
+
+            // คัดกรองข้อมูลเพิ่มเติมด้วย Tag Filter (ถ้าไม่ได้เลือก 'ทั้งหมด')
+            if (currentSelectedTag !== 'all') {
+                displayData = displayData.filter(row => {
+                    let tag = row['Tag'] && row['Tag'].trim() !== '' ? row['Tag'].trim() : 'ไม่มีแท็ก (No Tag)';
+                    return tag === currentSelectedTag;
+                });
+            }
+
+            // เรียงลำดับข้อมูลจากเวลาล่าสุด (ใหม่ที่สุด) ให้อยู่ด้านบนเสมอ เพื่อให้อ่านง่าย
+            displayData.sort((a, b) => {
+                if (a['_exactDateTime'] && b['_exactDateTime']) {
+                    return b['_exactDateTime'] - a['_exactDateTime'];
+                }
+                return 0;
+            });
+
+            // อัปเดตตัวเลขบนป้ายเหนือตาราง (เช่น จาก 30 รายการ อาจจะเหลือ 25 รายการถ้าเลือกล่าสุด)
+            elTableCountBadge.textContent = `${displayData.length} รายการ`;
+            
+            // ส่งข้อมูลไปวาดตาราง
+            renderTable(displayData);
+        }
+
+        // 7. วาดตารางข้อมูล (Data Table)
+        function renderTable(data) {
+            elDataTableBody.innerHTML = '';
+            
+            // แสดงสถานะว่าไม่มีข้อมูล
+            if (data.length === 0) {
+                elNoDataState.classList.remove('hidden');
+                return;
+            } else {
+                elNoDataState.classList.add('hidden');
+            }
+
+            const fragment = document.createDocumentFragment();
+            
+            data.forEach(row => {
+                const tr = document.createElement('tr');
+                tr.className = 'hover:bg-blue-50/40 transition-colors group';
+                
+                // คอลัมน์: วันที่ (เวลาที่ทัก)
+                const tdDate = document.createElement('td');
+                tdDate.className = 'px-6 py-4 whitespace-nowrap text-slate-800 font-medium';
+                tdDate.textContent = row['Date'] || '-';
+
+                // คอลัมน์: เวลา (Time)
+                const tdTime = document.createElement('td');
+                tdTime.className = 'px-6 py-4 whitespace-nowrap text-slate-500 font-mono text-xs';
+                const timeValue = row['Time'] || '-';
+                tdTime.innerHTML = `<span class="bg-slate-100 px-2 py-1.5 rounded-md text-slate-600 border border-slate-200 inline-flex items-center"><i class="far fa-clock mr-1.5 text-slate-400"></i>${timeValue}</span>`;
+
+                // คอลัมน์: User Id
+                const tdUser = document.createElement('td');
+                tdUser.className = 'px-6 py-4 text-slate-500 font-mono text-xs';
+                const userIdVal = row['UserId'] || '-';
+                // ตัดข้อความถ้ายาวไป
+                tdUser.innerHTML = `<div class="max-w-[200px] truncate" title="${userIdVal}"><i class="far fa-user mr-1.5 text-slate-300"></i>${userIdVal}</div>`;
+
+                // คอลัมน์: ข้อความ (Message)
+                const tdMessage = document.createElement('td');
+                tdMessage.className = 'px-6 py-4 text-slate-600 text-sm whitespace-normal';
+                const msgVal = row['Message'] || '-';
+                // ตัดข้อความและแสดง Tooltip เมื่อเอาเมาส์ชี้
+                tdMessage.innerHTML = `<div class="max-w-[250px] truncate" title="${msgVal}">${msgVal}</div>`;
+
+                // คอลัมน์: Tag
+                const tdTag = document.createElement('td');
+                tdTag.className = 'px-6 py-4 whitespace-nowrap';
+                
+                let tagVal = row['Tag'] && row['Tag'].trim() !== '' ? row['Tag'].trim() : 'ไม่มีแท็ก (No Tag)';
+                const theme = getThemeForTag(tagVal);
+                
+                tdTag.innerHTML = `<span class="inline-flex items-center px-3 py-1 rounded-full text-xs font-semibold ${theme.bg} ${theme.text} border ${theme.border} shadow-sm"><i class="fas fa-tag mr-1.5 ${theme.icon}"></i> ${tagVal}</span>`;
+
+                tr.appendChild(tdDate);
+                tr.appendChild(tdTime);
+                tr.appendChild(tdUser);
+                tr.appendChild(tdMessage);
+                tr.appendChild(tdTag);
+                fragment.appendChild(tr);
+            });
+
+            elDataTableBody.appendChild(fragment);
+        }
+
+        // 8. วาดส่วนสรุปยอดของแท็ก (Progress Bars)
+        function renderTags(tagCounts, totalInteractions) {
+            elTagsList.innerHTML = '';
+            
+            // เรียงลำดับจากแท็กที่มีจำนวนมากไปน้อย
+            const sortedTags = Object.entries(tagCounts)
+                .sort((a, b) => b[1] - a[1]);
+
+            if (sortedTags.length === 0) {
+                elTagsList.innerHTML = '<div class="text-center py-10 text-slate-400"><i class="fas fa-tags text-3xl mb-2"></i><p class="text-sm">ไม่พบข้อมูลแท็ก</p></div>';
+                return;
+            }
+
+            // จานสีสำหรับหลอดเปอร์เซ็นต์แท็ก
+            const gradients = [
+                'bg-gradient-to-r from-blue-500 to-cyan-500', 
+                'bg-gradient-to-r from-emerald-500 to-teal-400', 
+                'bg-gradient-to-r from-purple-500 to-indigo-500', 
+                'bg-gradient-to-r from-orange-400 to-red-400', 
+                'bg-gradient-to-r from-pink-500 to-rose-400',
+                'bg-gradient-to-r from-slate-400 to-slate-500' // สี Default สำหรับตัวถัดๆ ไป
+            ];
+
+            sortedTags.forEach(([tag, count], index) => {
+                const percentage = totalInteractions > 0 ? Math.round((count / totalInteractions) * 100) : 0;
+                
+                // ใช้สีเทาถ้าเป็น 'ไม่มีแท็ก'
+                const isNoTag = tag.includes('ไม่มีแท็ก');
+                const gradientClass = isNoTag ? 'bg-gradient-to-r from-slate-300 to-slate-400' : gradients[index % (gradients.length - 1)];
+                
+                const tagItem = document.createElement('div');
+                tagItem.className = 'group';
+                
+                tagItem.innerHTML = `
+                    <div class="flex justify-between items-end mb-1.5">
+                        <span class="text-sm font-semibold text-slate-700 truncate pr-2" title="${tag}">${tag}</span>
+                        <div class="text-right leading-none">
+                            <span class="text-[10px] text-slate-400 mr-1">${percentage}%</span>
+                            <span class="text-xs font-bold text-slate-800 bg-slate-100 px-2 py-1 rounded-md border border-slate-200">${count}</span>
+                        </div>
+                    </div>
+                    <div class="w-full bg-slate-100 rounded-full h-2.5 overflow-hidden border border-slate-200 shadow-inner">
+                        <div class="${gradientClass} h-full rounded-full transition-all duration-1000 ease-out" style="width: 0%"></div>
+                    </div>
+                `;
+                
+                elTagsList.appendChild(tagItem);
+                
+                // ใส่ Animation เล็กน้อยตอนโหลดหลอดเปอร์เซ็นต์
+                setTimeout(() => {
+                    const progressBar = tagItem.querySelector('.h-full');
+                    if(progressBar) progressBar.style.width = `${percentage}%`;
+                }, 100);
+            });
+        }
+
+        // 9. ฟังก์ชันสำหรับแสดงข้อผิดพลาด
+        function showError(message) {
+            elLoading.classList.add('hidden');
+            elDashboard.classList.add('hidden');
+            elError.classList.remove('hidden');
+            elErrorMsg.textContent = message;
+        }
+
+        // 10. Utility: ฟังก์ชันทำ Animation ตัวเลขวิ่งขึ้นตอนโหลดข้อมูล
+        function animateValue(obj, start, end, duration) {
+            let startTimestamp = null;
+            const step = (timestamp) => {
+                if (!startTimestamp) startTimestamp = timestamp;
+                const progress = Math.min((timestamp - startTimestamp) / duration, 1);
+                // easing (easeOutQuart) ทำให้ตัวเลขค่อยๆ ช้าลงตอนใกล้จบ
+                const easeOut = 1 - Math.pow(1 - progress, 4);
+                obj.innerHTML = Math.floor(easeOut * (end - start) + start).toLocaleString();
+                if (progress < 1) {
+                    window.requestAnimationFrame(step);
+                }
+            };
+            window.requestAnimationFrame(step);
+        }
+    </script>
+</body>
+</html>
